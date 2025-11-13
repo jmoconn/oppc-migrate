@@ -1,0 +1,19 @@
+{
+    "name": "tealmedia/oppc-migrate",
+    "description": "Content Migration Helper",
+    "type": "project",
+    "license": "GPL-3.0",
+    "authors": [
+      {
+        "name": "Teal Media",
+        "email": "jeff.oconnell@tealmedia.com"
+      }
+    ],
+    "minimum-stability": "dev",
+    "require": {},
+    "autoload": {
+      "psr-4": {
+        "OppcMigration\\": "./inc"
+      }
+    }
+  }
