@@ -23,7 +23,7 @@ class Cleanup
 		$data = $this->migrate_data;
 		$post_date = get_the_date( 'Y-m-d H:i:s', $this->post_id );
 
-		$is_pending = $data['meta']['application_status'] ?? 'publish';
+		$is_pending = 'complete' !== ( $data['meta']['application_status'] ?? 'complete' );
 
 		$country = $this->get_country( $data['meta']['office_country'] ?? '' );
 
@@ -32,9 +32,12 @@ class Cleanup
 			$headshot = $this->find_attachment_by_old_id( $headshot );
 		}
 
-		$years_in_practice = $data['meta']['years_in_practice'] ?? 0;
-		$post_published = get_post_time( 'U', true, $this->post_id );
-		$start_year = date( 'Y', strtotime( "-{$years_in_practice} years", $post_published ) );
+		$start_year = '';
+		if ( ! empty( $data['meta']['years_in_practice'] ?? null ) ) {
+			$years_in_practice = (int) ( $data['meta']['years_in_practice'] ?? 0 );
+			$post_published = get_post_time( 'U', true, $this->post_id );
+			$start_year = date( 'Y', strtotime( "-{$years_in_practice} years", $post_published ) );
+		}
 		
 		$supervisor_name = $data['meta']['supervisor'] ?? '';
 		$supervisor_first_name = '';
@@ -45,6 +48,17 @@ class Cleanup
 			$supervisor_last_name = implode( ' ', $supervisor_parts );
 		}
 
+		$modality_term_map = $this->get_modality_term_map();
+		$selected_modalities = array_map( 'intval', (array) $this->get_modality( $data['taxonomies']['modality'] ?? null ) );
+		$has_individuals = isset( $modality_term_map['individuals'] ) && in_array( $modality_term_map['individuals'], $selected_modalities, true );
+		$has_couples = isset( $modality_term_map['couples'] ) && in_array( $modality_term_map['couples'], $selected_modalities, true );
+		$has_families = isset( $modality_term_map['families'] ) && in_array( $modality_term_map['families'], $selected_modalities, true );
+
+		$rate_defaults = $this->get_default_rate_schedule( (int) $country );
+		$individual_rates = $rate_defaults['individuals'] ?? ['min' => null, 'max' => null];
+		$couples_rates = $rate_defaults['couples'] ?? ['min' => null, 'max' => null];
+		$family_rates = $rate_defaults['families'] ?? ['min' => null, 'max' => null];
+
 		$new_data = [
 			'preferred_first_name' => $data['user']['meta']['first_name'] ?? '',
 			'first_name' => $data['user']['meta']['first_name'] ?? '',
@@ -53,14 +67,14 @@ class Cleanup
 			'phone_number' => $data['meta']['clinician_phone_number'] ?? '',
 			'mission_statement' =>  $data['meta']['abstract_4'] ?? '',
 			'personal_statement' => $data['post_content'] ?? '',
-			'rate_individual_min' => $country === 654 ? 40 : 50,
-			'rate_individual_max' => $country === 654 ? 70 : 90,
-			'rate_couples_min' => $country === 654 ? 40 : 50,
-			'rate_couples_max' => $country === 654 ? 80 : 100,
-			'rate_family_min' => $country === 654 ? 40 : 50,
-			'rate_family_max' => $country === 654 ? 80 : 100,
+			'rate_individual_min' => $has_individuals ? ( $individual_rates['min'] ?? null ) : null,
+			'rate_individual_max' => $has_individuals ? ( $individual_rates['max'] ?? null ) : null,
+			'rate_couples_min' => $has_couples ? ( $couples_rates['min'] ?? null ) : null,
+			'rate_couples_max' => $has_couples ? ( $couples_rates['max'] ?? null ) : null,
+			'rate_family_min' => $has_families ? ( $family_rates['min'] ?? null ) : null,
+			'rate_family_max' => $has_families ? ( $family_rates['max'] ?? null ) : null,
 			'credentials' => $data['meta']['license'] ?? '',
-			'educational_certifications' => $data['meta']['masters_completed'] ?? 0,
+			'educational_certification' => $data['meta']['masters_completed'] ?? 0,
 			'masters_diploma' => null, // -- not on old site
 			'psypact_number' => null, //  -- not on old site
 			'headshot' => $headshot, // image
@@ -126,6 +140,16 @@ class Cleanup
 
 		$therapist_type = $this->get_therapist_type( $data['meta']['therapist_type'] ?? '' );
 		if ( $therapist_type ) {
+			if ( 733 === $therapist_type ) {
+				$student_intern_location_type = [];
+				$global_online = ! empty( $data['meta']['accepting_teleconferencing'] ) ? 1 : 0;
+				if ( $global_online ) {
+					$student_intern_location_type[] = 911;
+				}
+				if ( ! empty( $data['meta']['office_street'] ) ) {
+					$student_intern_location_type[] = 910;
+				}
+			}
 			$therapist_type = [$therapist_type];
 		}
 
@@ -628,26 +652,14 @@ class Cleanup
 			return null;
 		}
 
-		$new_terms = [
-			'Couples' => 735,
-			'Families' => 736,
-			'Individuals' => 734,
-		];
-
+		$term_map = $this->get_modality_term_map();
 		$new_modality = [];
 
 		if ( is_array( $modality ) ) {
-			foreach ( $modality as $key => $value ) {
-				switch ( $value['name'] ) {
-					case 'Couples':
-						$new_modality[] = $new_terms['Couples'];
-						break;
-					case 'Family':
-						$new_modality[] = $new_terms['Families'];
-						break;
-					case 'Individual':
-						$new_modality[] = $new_terms['Individuals'];
-						break;
+			foreach ( $modality as $value ) {
+				$key = $this->normalize_modality_key( $value['name'] ?? '' );
+				if ( $key && isset( $term_map[ $key ] ) ) {
+					$new_modality[] = $term_map[ $key ];
 				}
 			}
 		}
@@ -998,6 +1010,58 @@ class Cleanup
 		}
 
 		return $country->name;
+	}
+
+	private function get_modality_term_map(): array
+	{
+		return [
+			'individuals' => 734,
+			'couples'     => 735,
+			'families'    => 736,
+		];
+	}
+
+	private function normalize_modality_key( $value ): ?string
+	{
+		$value = strtolower( trim( (string) $value ) );
+		if ( '' === $value ) {
+			return null;
+		}
+
+		$aliases = [
+			'individual'         => 'individuals',
+			'individuals'        => 'individuals',
+			'individual therapy' => 'individuals',
+			'individual counseling' => 'individuals',
+			'couple'             => 'couples',
+			'couples'            => 'couples',
+			'couples therapy'    => 'couples',
+			'family'             => 'families',
+			'families'           => 'families',
+			'family therapy'     => 'families',
+		];
+
+		return $aliases[ $value ] ?? null;
+	}
+
+	private function get_default_rate_schedule( int $country = 0 ): array
+	{
+		$is_us = (int) $country === 654;
+
+		return [
+			'individuals' => [
+				'min' => $is_us ? 40 : 50,
+				'max' => $is_us ? 70 : 90,
+			],
+			'couples' => [
+				'min' => $is_us ? 40 : 50,
+				'max' => $is_us ? 80 : 100,
+			],
+			'families' => [
+				'min' => $is_us ? 40 : 50,
+				'max' => $is_us ? 80 : 100,
+			],
+		];
 	}
 
 	private function get_country_name_from_term_id( $term_id )

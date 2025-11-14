@@ -35,6 +35,21 @@ class Migrate
 		( new \OppcMigration\Therapist\Cleanup( $post_id ) )->cleanup();
 	}
 
+	public function index_therapists( $args = [], $assoc_args = [] )
+	{
+		$args = [
+			'post_type' => 'therapist',
+			'post_count' => -1,
+			'fields' => 'ids',
+		];
+		$post_ids = get_posts( $args );
+		foreach( $post_ids as $post_id ) {
+			$user = oppc_user(['post_id' => $post_id]);
+			$user->index(true);
+			$user->sync_algolia();
+		}
+	}
+
 	public function import_clients( $args = [], $assoc_args = [] )
 	{
 		( new \OppcMigration\Client\Import() )->import( $args, $assoc_args );
