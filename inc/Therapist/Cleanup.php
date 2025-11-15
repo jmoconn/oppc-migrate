@@ -29,9 +29,10 @@ class Cleanup
 
 		$headshot = $data['meta']['_thumbnail_id'] ?? '';
 		if ( $headshot ) {
-			$headshot = $this->find_attachment_by_old_id( $headshot );
+			$old_headshot_id = (int) $headshot;
+			$headshot = $this->find_attachment_by_old_id( $old_headshot_id );
 			if ( ! $headshot ) {
-				// TODO: fetch from old site and import post but DO NOT SIDELOAD FILE. We'll be moving all files over to the server so don't need want to waste time downloading and re-uploading. We just need to import the post itself so the media ID is correct.
+				$headshot = $this->import_remote_attachment( $old_headshot_id );
 			}
 		}
 
@@ -1157,6 +1158,145 @@ class Cleanup
 		}
 
 		return $row;
+	}
+
+	private function import_remote_attachment( int $old_id ): ?int {
+		if ( $old_id <= 0 ) {
+			return null;
+		}
+
+		$endpoint = sprintf( 'https://oppc-old.lndo.site/wp-json/wp/v2/media/%d', $old_id );
+		$endpoint = add_query_arg( [
+			'_fields' => 'id,date,date_gmt,slug,status,title,caption,description,alt_text,media_details,source_url,post,mime_type',
+		], $endpoint );
+
+		$response = wp_remote_get( $endpoint, [
+			'timeout' => 20,
+			'headers' => [
+				'Accept' => 'application/json',
+				'User-Agent' => 'OPPC-Media-Fetch/1.0',
+			],
+		] );
+
+		if ( is_wp_error( $response ) ) {
+			error_log( sprintf( 'Failed to fetch remote attachment %d: %s', $old_id, $response->get_error_message() ) );
+			return null;
+		}
+
+		$code = (int) wp_remote_retrieve_response_code( $response );
+		if ( $code < 200 || $code >= 300 ) {
+			error_log( sprintf( 'Failed to fetch remote attachment %d: HTTP %d', $old_id, $code ) );
+			return null;
+		}
+
+		$body = wp_remote_retrieve_body( $response );
+		$media = json_decode( $body, true );
+		if ( ! is_array( $media ) ) {
+			error_log( sprintf( 'Failed to parse remote attachment payload for %d.', $old_id ) );
+			return null;
+		}
+
+		$source_url = (string) ( $media['source_url'] ?? '' );
+		$mime_type  = (string) ( $media['mime_type'] ?? '' );
+
+		if ( '' === $source_url || '' === $mime_type ) {
+			error_log( sprintf( 'Remote attachment %d missing source URL or mime type.', $old_id ) );
+			return null;
+		}
+
+		$title   = wp_strip_all_tags( $media['title']['rendered'] ?? '' );
+		$caption = wp_strip_all_tags( $media['caption']['rendered'] ?? '' );
+		$content = (string) ( $media['description']['rendered'] ?? '' );
+		$slug    = sanitize_title( $media['slug'] ?? '' );
+		$post_date = ! empty( $media['date'] ) ? (string) $media['date'] : current_time( 'mysql' );
+		$post_date_gmt = ! empty( $media['date_gmt'] ) ? (string) $media['date_gmt'] : get_gmt_from_date( $post_date );
+
+		$postarr = [
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'post_title'     => $title !== '' ? $title : basename( parse_url( $source_url, PHP_URL_PATH ) ?: '' ),
+			'post_content'   => $content,
+			'post_excerpt'   => $caption,
+			'post_name'      => $slug,
+			'post_author'    => get_current_user_id() ?: 0,
+			'post_mime_type' => $mime_type,
+			'post_date'      => $post_date,
+			'post_date_gmt'  => $post_date_gmt,
+			'guid'           => $source_url,
+		];
+
+		$inserted = wp_insert_post( $postarr, true );
+		if ( is_wp_error( $inserted ) ) {
+			error_log( sprintf( 'Failed to insert remote attachment %d: %s', $old_id, $inserted->get_error_message() ) );
+			return null;
+		}
+
+		$attachment_id = (int) $inserted;
+
+		$remote_path = ltrim( (string) parse_url( $source_url, PHP_URL_PATH ), '/' );
+		if ( '' !== $remote_path ) {
+			update_post_meta( $attachment_id, '_wp_attached_file', $remote_path );
+		}
+
+		$media_details = is_array( $media['media_details'] ?? null ) ? $media['media_details'] : [];
+		$metadata = $this->normalize_remote_media_metadata( $media_details, $source_url, $mime_type );
+		update_post_meta( $attachment_id, '_wp_attachment_metadata', $metadata );
+
+		$alt_text = wp_strip_all_tags( $media['alt_text'] ?? '' );
+		if ( '' !== $alt_text ) {
+			update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt_text );
+		} else {
+			delete_post_meta( $attachment_id, '_wp_attachment_image_alt' );
+		}
+
+		update_post_meta( $attachment_id, '_migrate_id', $old_id );
+		update_post_meta( $attachment_id, '_migrate_url', $source_url );
+		update_post_meta( $attachment_id, '_migrate_parent_id', (int) ( $media['post'] ?? 0 ) );
+		update_post_meta( $attachment_id, '_migrate_data', $media_details );
+
+		if ( null !== self::$map ) {
+			self::$map[ $old_id ] = $attachment_id;
+		}
+
+		return $attachment_id;
+	}
+
+	private function normalize_remote_media_metadata( array $media_details, string $source_url, string $mime_type ): array {
+		$file_path = isset( $media_details['file'] ) ? (string) $media_details['file'] : ltrim( (string) parse_url( $source_url, PHP_URL_PATH ), '/' );
+
+		$metadata = [
+			'width'      => isset( $media_details['width'] ) ? (int) $media_details['width'] : 0,
+			'height'     => isset( $media_details['height'] ) ? (int) $media_details['height'] : 0,
+			'file'       => $file_path,
+			'filesize'   => isset( $media_details['filesize'] ) ? (int) $media_details['filesize'] : null,
+			'sizes'      => [],
+			'image_meta' => isset( $media_details['image_meta'] ) && is_array( $media_details['image_meta'] ) ? $media_details['image_meta'] : [],
+		];
+
+		if ( ! empty( $media_details['sizes'] ) && is_array( $media_details['sizes'] ) ) {
+			foreach ( $media_details['sizes'] as $name => $size ) {
+				if ( ! is_array( $size ) ) {
+					continue;
+				}
+
+				$metadata['sizes'][ $name ] = [
+					'file'      => isset( $size['file'] ) ? (string) $size['file'] : basename( parse_url( $size['source_url'] ?? '', PHP_URL_PATH ) ?: '' ),
+					'width'     => isset( $size['width'] ) ? (int) $size['width'] : 0,
+					'height'    => isset( $size['height'] ) ? (int) $size['height'] : 0,
+					'mime-type' => isset( $size['mime_type'] ) ? (string) $size['mime_type'] : $mime_type,
+				];
+
+				if ( ! empty( $size['source_url'] ) ) {
+					$metadata['sizes'][ $name ]['remote_source_url'] = (string) $size['source_url'];
+				}
+
+				if ( isset( $size['filesize'] ) ) {
+					$metadata['sizes'][ $name ]['filesize'] = (int) $size['filesize'];
+				}
+			}
+		}
+
+		return $metadata;
 	}
 
 	// public function create_user()
