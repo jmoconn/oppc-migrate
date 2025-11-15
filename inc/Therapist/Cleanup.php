@@ -30,6 +30,9 @@ class Cleanup
 		$headshot = $data['meta']['_thumbnail_id'] ?? '';
 		if ( $headshot ) {
 			$headshot = $this->find_attachment_by_old_id( $headshot );
+			if ( ! $headshot ) {
+				// TODO: fetch from old site and import post but DO NOT SIDELOAD FILE. We'll be moving all files over to the server so don't need want to waste time downloading and re-uploading. We just need to import the post itself so the media ID is correct.
+			}
 		}
 
 		$start_year = '';
@@ -90,10 +93,6 @@ class Cleanup
 			'supervisor_last_name' => $supervisor_last_name, // text
 			'supervisor_license_number' => null, // text
 			'supervisor_email_address' => null, // text
-			'supervisor_street_address' => null, // text
-			'supervisor_street_address2' => null, // text
-			'supervisor_city' => null, // text
-			'supervisor_zip_code' => null, // text
 			'graduation_month' => $data['meta']['graduation_month'] ?? null, // number
 			'graduation_year' => $data['meta']['graduation_year'] ?? null, // number
 			'supervision_contract' => null, // file
@@ -175,7 +174,6 @@ class Cleanup
 			'therapist_license_status' => $license_status,
 			'therapist_license_type' => $therapist_type,
 			'supervisor_license_type' => null,
-			'supervisor_state' => null,
 			'therapist_license_compact' => null,
 			'therapist_modality' => $modality,
 			'therapist_payment_method' => null,
