@@ -83,12 +83,12 @@ class Cleanup
 			'psypact_number' => null, //  -- not on old site
 			'headshot' => $headshot, // image
 			'video' => null, // -- not on old site
-			'undergraduate_school' => $data['meta']['clinician_school'], // text
-			'postgraduate_school' => $data['meta']['clinician_school_post'], // text
+			'undergraduate_school' => $data['meta']['clinician_school'] ?? null, // text
+			'postgraduate_school' => $data['meta']['clinician_school_post'] ?? null, // text
 			'start_year' => $start_year, // text
-			'practice_name' => $data['meta']['practice_name'], // text
-			'practice_website' => $data['meta']['clinician_website_url'], // text
-			'new_clients' => $data['meta']['new_clients'], // true/false
+			'practice_name' => $data['meta']['practice_name'] ?? null, // text
+			'practice_website' => $data['meta']['clinician_website_url'] ?? null, // text
+			'new_clients' => $data['meta']['new_clients'] ?? false, // true/false
 			'free_consultation' => null, //  -- not on old site
 			'supervisor_first_name' => $supervisor_first_name, // text
 			'supervisor_last_name' => $supervisor_last_name, // text

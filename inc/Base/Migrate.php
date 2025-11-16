@@ -17,6 +17,7 @@ class Migrate
 			'post_type' => 'therapist',
 			'posts_per_page' => -1,
 			'fields' => 'ids',
+			'post_status' => 'any',
 			'meta_query' => [
 				[
 					'key'     => '_migrate_id',
@@ -25,6 +26,8 @@ class Migrate
 			],
 		];
 		$post_ids = get_posts( $args );
+
+		\WP_CLI::log( 'Cleaning up ' . count( $post_ids ) . ' therapist posts.' );
 
 		foreach( $post_ids as $key => $post_id ) {
 			\WP_CLI::log( "Cleaning up $key therapist post ID: {$post_id}" );
