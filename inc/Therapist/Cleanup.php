@@ -63,10 +63,25 @@ class Cleanup
 		$couples_rates = $rate_defaults['couples'] ?? ['min' => null, 'max' => null];
 		$family_rates = $rate_defaults['families'] ?? ['min' => null, 'max' => null];
 
+		$post_title = $data['post_title'] ?? '';
+		$first_title_word = strtok( $post_title, ' ' );
+		$last_title_word = strrchr( $post_title, ' ' );
+
+		$preferred_first_name = $data['meta']['first_name'] ?? '';
+		$first_name = $preferred_first_name;
+		if ( $preferred_first_name && $preferred_first_name !== ucfirst( $preferred_first_name ) && $preferred_first_name !== $first_title_word ) {
+			$preferred_first_name = ucfirst( $preferred_first_name );
+			$first_name = $preferred_first_name;
+		}
+		$last_name = $data['meta']['last_name'] ?? '';
+		if ( $last_name && $last_name !== ucfirst( $last_name ) && $last_name !== ltrim( $last_title_word ) ) {
+			$last_name = ucfirst( $last_name );
+		}
+
 		$new_data = [
-			'preferred_first_name' => $data['user']['meta']['first_name'] ?? '',
-			'first_name' => $data['user']['meta']['first_name'] ?? '',
-			'last_name' => $data['user']['meta']['last_name'] ?? '',
+			'preferred_first_name' => $preferred_first_name,
+			'first_name' => $first_name,
+			'last_name' => $last_name,
 			'email_address' => $data['user']['user_email'] ?? '',
 			'phone_number' => $data['meta']['clinician_phone_number'] ?? '',
 			'mission_statement' =>  $data['meta']['abstract_4'] ?? '',
@@ -1160,7 +1175,7 @@ class Cleanup
 		return $row;
 	}
 
-	private function import_remote_attachment( int $old_id ): ?int {
+	public function import_remote_attachment( int $old_id ): ?int {
 		if ( $old_id <= 0 ) {
 			return null;
 		}
@@ -1170,13 +1185,7 @@ class Cleanup
 			'_fields' => 'id,date,date_gmt,slug,status,title,caption,description,alt_text,media_details,source_url,post,mime_type',
 		], $endpoint );
 
-		$response = wp_remote_get( $endpoint, [
-			'timeout' => 20,
-			'headers' => [
-				'Accept' => 'application/json',
-				'User-Agent' => 'OPPC-Media-Fetch/1.0',
-			],
-		] );
+		$response = wp_remote_get( $endpoint, $this->get_remote_media_request_args( $old_id ) );
 
 		if ( is_wp_error( $response ) ) {
 			error_log( sprintf( 'Failed to fetch remote attachment %d: %s', $old_id, $response->get_error_message() ) );
@@ -1297,6 +1306,26 @@ class Cleanup
 		}
 
 		return $metadata;
+	}
+
+	private function get_remote_media_request_args( int $old_id ): array {
+		$args = [
+			'timeout' => 20,
+			'headers' => [
+				'Accept' => 'application/json',
+				'User-Agent' => 'OPPC-Media-Fetch/1.0',
+			],
+		];
+
+		$basic_user = defined( 'OPPC_OLD_MEDIA_BASIC_AUTH_USER' ) ? OPPC_OLD_MEDIA_BASIC_AUTH_USER : '';
+		$basic_pass = defined( 'OPPC_OLD_MEDIA_BASIC_AUTH_PASSWORD' ) ? OPPC_OLD_MEDIA_BASIC_AUTH_PASSWORD : '';
+		if ( '' !== $basic_user && '' !== $basic_pass ) {
+			$args['headers']['Authorization'] = 'Basic ' . base64_encode( $basic_user . ':' . $basic_pass );
+		} elseif ( defined( 'OPPC_OLD_MEDIA_BEARER_TOKEN' ) && '' !== OPPC_OLD_MEDIA_BEARER_TOKEN ) {
+			$args['headers']['Authorization'] = 'Bearer ' . OPPC_OLD_MEDIA_BEARER_TOKEN;
+		}
+
+		return apply_filters( 'oppc_migrate_remote_media_request_args', $args, $old_id );
 	}
 
 	// public function create_user()

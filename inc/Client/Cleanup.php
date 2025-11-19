@@ -74,6 +74,31 @@ class Cleanup
 			
 		}
 
+		$email_address = $client_data['email'] ?? '';
+		$original_email = $email_address;
+		if ( email_exists( $email_address ) ) {
+			$user = oppc_user( ['email' => $email_address ] );
+			if ( 'therapist' === $user->get_type() ) {
+				// TODO: test this
+				$email_parts = explode( '@', $email_address );
+				$email_address = $email_parts[0] . '+client@' . $email_parts[1];
+			} else {
+				// another client already exists, add +client to the email if that email doesn't already exist
+				$email_parts = explode( '@', $email_address );
+				$new_email = $email_parts[0] . '+client@' . $email_parts[1];
+				if ( ! email_exists( $new_email ) ) {
+					$email_address = $new_email;
+				} else {
+					// append a random number
+					$random_number = rand( 1000, 9999 );
+					$email_address = $email_parts[0] . '+client' . $random_number . '@' . $email_parts[1];
+				}
+			}
+		}
+		if ( $email_address !== $original_email ) {
+			error_log( "Changed email address for client ID $client_id from $original_email to $email_address to avoid conflict." );
+		}
+
 		$data = [
 			'member_id' => $client_data['member_id'] ?? '',
 			'preferred_first_name' => $client_data['fname'] ?? '',
